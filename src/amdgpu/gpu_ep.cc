@@ -436,18 +436,9 @@ Ort::Status ExecutionProvider::OnRunStart(const OrtRunOptions* run_options) cons
 
 Ort::Status ExecutionProvider::CreateAllocator(const OrtMemoryInfo* memory_info,
     OrtAllocator** allocator) const noexcept {
-    // DirectML implements this on its OrtEp; migraphx and hip implement it on their factory.
-    // Prefer the former, as ORT itself does. The explicit null check is needed because
-    // EP_CALL_S reports a missing function pointer as success, leaving *allocator unset.
-    if (backend_ep_ != nullptr && backend_ep_->CreateAllocator != nullptr) {
-        EP_CALL_S(backend_ep_, CreateAllocator, memory_info, allocator);
-    }
-    if (backend_ep_factory_ == nullptr) {
-        return MAKE_STATUS(ORT_EP_FAIL, "CreateAllocator: invalid backend factory");
-    }
-    RETURN_IF_ERROR(backend_ep_factory_->CreateAllocator(backend_ep_factory_, memory_info,
-        nullptr /*allocator_options*/, allocator));
-    return STATUS_OK;
+    // ORT releases this allocator through the umbrella factory, even when it was
+    // created by the backend's per-EP hook. Record the owner for that callback.
+    return factory_.CreateSessionAllocator(backend_ep_, backend_ep_factory_, memory_info, allocator);
 }
 
 Ort::Status ExecutionProvider::OnRunEnd(const OrtRunOptions* run_options, bool sync_stream) const noexcept {

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "backend_allocator_registry.h"
 #include "gpu_allocator.h"
 #include "gpu_data_transfer.h"
 
@@ -61,6 +62,9 @@ struct ProviderFactory : OrtEpFactory, ApiPtrs {
 
     [[nodiscard]] const char* GetVersion() const;
 
+    Ort::Status CreateSessionAllocator(OrtEp* backend_ep, OrtEpFactory* backend_factory,
+        const OrtMemoryInfo* memory_info, OrtAllocator** allocator);
+
 private:
     [[nodiscard]] const char* GetVendor() const;
     [[nodiscard]] const char* GetName() const;
@@ -82,7 +86,7 @@ private:
     Ort::Status CreateAllocator(const OrtMemoryInfo* memory_info,
         const OrtKeyValuePairs* allocator_options, OrtAllocator** allocator);
 
-    void ReleaseAllocator(OrtAllocator* allocator) const;
+    void ReleaseAllocator(OrtAllocator* allocator);
 
     Ort::Status CreateDataTransfer(OrtDataTransferImpl** data_transfer);
 
@@ -148,6 +152,8 @@ private:
     // unload (use-after-free on the factory during teardown).
     std::unique_ptr<Allocator> gpu_allocator_{};     // OrtDeviceMemoryType_DEFAULT
     std::unique_ptr<Allocator> pinned_allocator_{};  // OrtDeviceMemoryType_HOST_ACCESSIBLE
+
+    BackendAllocatorRegistry session_allocators_;
 };
 
 }  // namespace gpu_ep

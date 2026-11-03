@@ -228,6 +228,7 @@ ProviderFactory::~ProviderFactory() {
     // by the time the factory is destroyed since sessions are destroyed first.
     gpu_allocator_.reset();
     pinned_allocator_.reset();
+    session_allocators_.ReleaseAll();
 
     if (gpu_memory_info_) {
         ort_api.ReleaseMemoryInfo(gpu_memory_info_);
@@ -377,9 +378,44 @@ Ort::Status ProviderFactory::CreateAllocator(const OrtMemoryInfo* memory_info,
     return STATUS_OK;
 }
 
-void ProviderFactory::ReleaseAllocator(OrtAllocator*) const {
-    // no-op — the allocators are owned by the factory (gpu_allocator_ /
-    // pinned_allocator_) and shared across sessions.
+Ort::Status ProviderFactory::CreateSessionAllocator(OrtEp* backend_ep,
+    OrtEpFactory* backend_factory, const OrtMemoryInfo* memory_info, OrtAllocator** allocator) {
+    *allocator = nullptr;
+    if (backend_factory == nullptr || backend_factory->ReleaseAllocator == nullptr) {
+        return MAKE_STATUS(ORT_EP_FAIL, "CreateAllocator: backend cannot release allocators");
+    }
+    if (backend_ep != nullptr && backend_ep->CreateAllocator != nullptr) {
+        RETURN_IF_ERROR(backend_ep->CreateAllocator(backend_ep, memory_info, allocator));
+    } else if (backend_factory->CreateAllocator != nullptr) {
+        RETURN_IF_ERROR(backend_factory->CreateAllocator(backend_factory, memory_info,
+            nullptr /*allocator_options*/, allocator));
+    } else {
+        return MAKE_STATUS(ORT_EP_FAIL, "CreateAllocator: backend cannot create allocators");
+    }
+    if (*allocator == nullptr) {
+        // The ORT API allows nullptr to select the default CPU allocator.
+        return STATUS_OK;
+    }
+    try {
+        if (session_allocators_.Track(*allocator, backend_factory)) {
+            return STATUS_OK;
+        }
+    } catch (...) {
+        backend_factory->ReleaseAllocator(backend_factory, *allocator);
+        *allocator = nullptr;
+        return MAKE_STATUS(ORT_EP_FAIL, "CreateAllocator: failed to track backend allocator");
+    }
+    backend_factory->ReleaseAllocator(backend_factory, *allocator);
+    *allocator = nullptr;
+    return MAKE_STATUS(ORT_EP_FAIL, "CreateAllocator: conflicting backend allocator owner");
+}
+
+void ProviderFactory::ReleaseAllocator(OrtAllocator* allocator) {
+    // Factory-owned shared wrappers keep their existing lifetime. Direct session
+    // allocators must be returned to the backend that created them.
+    if (allocator != gpu_allocator_.get() && allocator != pinned_allocator_.get()) {
+        session_allocators_.Release(allocator);
+    }
 }
 
 Ort::Status ProviderFactory::CreateDataTransfer(OrtDataTransferImpl** data_transfer) {

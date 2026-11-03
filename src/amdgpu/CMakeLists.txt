@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 add_library(amdgpu-ep MODULE
+        backend_allocator_registry.h
         gpu_allocator.cc
         gpu_allocator.h
         gpu_data_transfer.cc
